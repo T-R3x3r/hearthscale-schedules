@@ -1,9 +1,12 @@
 {
   "id": "schedules",
   "name": "Schedules",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "api": 3,
-  "icon": "icon.svg",
+  "icon": {
+    "light": "assets/icon-light.svg",
+    "dark": "assets/icon-dark.svg"
+  },
   "description": "The one place every recurring task is authored and listed. An agent asks it for a timed run of itself; it starts the conversation when the time comes, records the run and tells you about it.",
   "environment": {
     "kind": "process",
@@ -23,7 +26,14 @@
     "main": {
       "kind": "own",
       "title": "Schedules"
-    }
+    },
+    "panels": [
+      {
+        "id": "schedule",
+        "title": "Schedule",
+        "instances": "many"
+      }
+    ]
   },
   "tools": [
     {

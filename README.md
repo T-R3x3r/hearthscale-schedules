@@ -16,6 +16,23 @@ hearthscale dev .
 links this folder into the running platform, picks up every change, and
 asks once in the window before any code runs.
 
+## The page
+
+The page's source is React on Hearthscale's design system, under `ui/src`.
+Its build writes `ui.js` and `ui.css` into this folder, and those two files
+are what the package carries, so they are committed with every change to
+the source. The design system is linked from a Hearthscale checkout, so
+this clone must sit beside one named `Hearthscale`:
+
+```
+cd ui
+pnpm install
+pnpm build
+```
+
+`ui/pnpm-workspace.yaml` keeps the build its own project: without it, pnpm
+joins any workspace in a folder above.
+
 ## Releasing
 
 Install the Hearthscale registry's GitHub App on this repository once. Then

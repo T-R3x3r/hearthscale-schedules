@@ -673,6 +673,12 @@ module.exports = {
       ]);
       return { models, projects, effective };
     },
+    /** An expression's rhythm in words, for a form that edits one; one
+     *  that does not parse is refused with the reason. */
+    async words({ spec }) {
+      parseCron(spec);
+      return capital(rhythmWords({ spec: String(spec).trim() }));
+    },
     async create({ draft }) {
       const app = await resolveApp(null, draft.app);
       const s = makeSchedule(draft, app);
