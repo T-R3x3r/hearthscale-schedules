@@ -6,7 +6,9 @@
  * that app with the prompt, keeps the run until the conversation's turn
  * ends, and tells the person as the schedule asks. The tools serve
  * agents over the bus; the invoke handlers serve the app's own page.
- * The service lifetime keeps the timers running with no window open.
+ * Once a day and whenever the set of apps changes, it asks the model for
+ * recurring tasks worth suggesting. The service lifetime keeps the timers
+ * running with no window open.
  */
 
 const TICK_MS = 15000;
@@ -14,6 +16,12 @@ const TICK_MS = 15000;
 const RUNS_KEPT = 50;
 /** How far a cron search looks for the next match. */
 const SEARCH_MINUTES = 366 * 24 * 60;
+/** How often the backend asks for suggestions of its own. */
+const SUGGEST_EVERY_MS = 24 * 60 * 60 * 1000;
+/** The most suggestions one ask adds. */
+const SUGGEST_MAX = 3;
+/** The most characters of a run's answer a notification carries. */
+const NOTICE_CHARS = 180;
 
 // ---- Cron -----------------------------------------------------------------
 
@@ -47,6 +55,7 @@ function field(text, min, max, names) {
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 /** The five sets an expression admits. Throws on an expression that is
  *  not five fields of minutes, hours, days, months and weekdays. */
@@ -79,6 +88,7 @@ function fieldsIn(zone, at) {
   }).formatToParts(at);
   const get = (type) => parts.find((p) => p.type === type)?.value ?? '';
   return {
+    year: Number(get('year')),
     minute: Number(get('minute')),
     hour: Number(get('hour')) % 24,
     date: Number(get('day')),
@@ -116,12 +126,67 @@ function checkZone(zone) {
 
 const localZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+// ---- Words ------------------------------------------------------------------
+
+const pad = (n) => String(n).padStart(2, '0');
+
+/** An instant as a person reads it in a zone: "25 Sept 2026, 14:04". */
+function stamp(iso, zone) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone,
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(iso));
+}
+
+/** When an instant falls, from now, in a zone: "today at 15:00",
+ *  "tomorrow at 09:00", or "on 27 Sept 2026, 09:00". */
+function nextWords(iso, zone) {
+  const at = fieldsIn(zone, new Date(iso));
+  const now = fieldsIn(zone, new Date());
+  const tomorrow = fieldsIn(zone, new Date(Date.now() + 24 * 60 * 60 * 1000));
+  const same = (a, b) => a.year === b.year && a.month === b.month && a.date === b.date;
+  const time = `${pad(at.hour)}:${pad(at.minute)}`;
+  if (same(at, now)) return `today at ${time}`;
+  if (same(at, tomorrow)) return `tomorrow at ${time}`;
+  return `on ${stamp(iso, zone)}`;
+}
+
+/** A schedule's rhythm in the words a person reads. */
+function rhythmWords(s) {
+  if (s.once) return `once, ${stamp(s.once, s.timezone)}`;
+  const [m, h, dom, mon, dow] = s.spec.split(/\s+/);
+  const num = (v) => /^\d+$/.test(v);
+  const every = (v) => /^\*\/\d+$/.test(v);
+  const at = num(m) && num(h) ? ` at ${pad(h)}:${pad(m)}` : '';
+  const anyDay = dom === '*' && mon === '*' && dow === '*';
+  if (m === '*' && h === '*' && anyDay) return 'every minute';
+  if (every(m) && h === '*' && anyDay) return `every ${m.slice(2)} minutes`;
+  if (num(m) && h === '*' && anyDay) return `every hour at minute ${Number(m)}`;
+  if (num(m) && every(h) && anyDay) return `every ${h.slice(2)} hours at minute ${Number(m)}`;
+  if (anyDay && at) return `every day${at}`;
+  if (dom === '*' && mon === '*' && dow === '1-5' && at) return `every weekday${at}`;
+  if (dom === '*' && mon === '*' && /^[0-7]$/.test(dow) && at) {
+    return `every ${DAY_NAMES[Number(dow) % 7]}${at}`;
+  }
+  if (every(dom) && mon === '*' && dow === '*' && at) return `every ${dom.slice(2)} days${at}`;
+  if (num(dom) && mon === '*' && dow === '*' && at) return `every month on day ${dom}${at}`;
+  return 'on a custom rhythm';
+}
+
+const capital = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
 // ---- The record -------------------------------------------------------------
 
 let ctx = null;
-let state = { schedules: {}, runs: [], suggestions: [] };
+let state = { schedules: {}, runs: [], suggestions: [], dismissed: [], suggestedAt: null };
 let timer = null;
 let sequence = 0;
+let suggesting = false;
 
 const save = () => ctx.store.set('state', state);
 const changed = async () => {
@@ -131,31 +196,71 @@ const changed = async () => {
 
 const shortId = () => `${Date.now().toString(36)}-${(sequence += 1).toString(36)}`;
 
-/** The app a call came from: the first app on the chain that is not
- *  this one, else the app named. */
-function callerOf(run, named) {
-  if (typeof named === 'string' && named) return named;
-  const from = run?.context?.chain?.find((p) => p.kind === 'app' && p.id !== ctx.app.id);
-  if (!from) throw new Error('name the app the conversation starts in');
-  return from.id;
+/** The apps a schedule may run in: every enabled app with an agent. */
+async function candidates() {
+  return (await ctx.apps.list()).filter((a) => a.agent && a.id !== ctx.app.id);
 }
 
-function whenOf(s) {
-  return s.once ? `once at ${s.once}` : `${s.spec} (${s.timezone})`;
+const choicesWords = (apps) =>
+  apps.length ? apps.map((a) => `${a.id} (${a.name})`).join(', ') : 'none is installed';
+
+/**
+ * The app a schedule runs in. A name matches an app's id, else its display
+ * name ignoring case; no name is the first app on the call chain that is a
+ * candidate. Anything else is refused with the choices, so the calling
+ * model can retry.
+ */
+async function resolveApp(run, named) {
+  const apps = await candidates();
+  if (typeof named === 'string' && named.trim()) {
+    const want = named.trim();
+    const hit =
+      apps.find((a) => a.id === want) ??
+      apps.find((a) => a.name.toLowerCase() === want.toLowerCase());
+    if (!hit) {
+      throw new Error(
+        `no installed app with an agent is called "${want}"; the choices are: ${choicesWords(apps)}. Leave app out to run in your own app.`,
+      );
+    }
+    return hit;
+  }
+  const chain = run?.context?.chain ?? [];
+  const from = chain.find((p) => p.kind === 'app' && apps.some((a) => a.id === p.id));
+  if (!from) {
+    throw new Error(
+      `Name the app the conversation starts in; the choices are: ${choicesWords(apps)}.`,
+    );
+  }
+  return apps.find((a) => a.id === from.id);
+}
+
+/** The display name of the app a record names: the app's own while it is
+ *  enabled, else the name the record kept when it was made. */
+async function appNames() {
+  const names = new Map((await ctx.apps.list()).map((a) => [a.id, a.name]));
+  return (record) => names.get(record.app) ?? record.appName;
+}
+
+/** One schedule in words: the rhythm, the app, and the next run. */
+function scheduleWords(s, nameOf) {
+  const next =
+    s.enabled && !s.spent && s.nextRunAt ? ` Next run ${nextWords(s.nextRunAt, s.timezone)}.` : '';
+  return `"${s.title}" ${rhythmWords(s)}, in ${nameOf(s)}.${next}`;
 }
 
 /** One schedule as the model reads it. */
-function describe(s) {
-  const notes = [whenOf(s), `in ${s.app}`];
-  if (!s.enabled) notes.push('off');
+function describe(s, nameOf) {
+  const notes = [];
+  if (!s.enabled) notes.push(s.offReason ? `off: ${s.offReason}` : 'off');
   if (s.spent) notes.push('already ran');
   if (s.running) notes.push('running now');
-  if (s.nextRunAt && s.enabled && !s.spent) notes.push(`next ${s.nextRunAt}`);
-  if (s.lastRunAt) notes.push(`last ${s.lastRunAt}`);
-  return `${s.id} "${s.title}": ${notes.join(', ')}\n  ${s.prompt}`;
+  if (s.lastRunAt) notes.push(`last ran ${stamp(s.lastRunAt, s.timezone)}`);
+  const spec = s.spec ? ` Cron "${s.spec}" in ${s.timezone}.` : '';
+  return `${s.id}: ${scheduleWords(s, nameOf)}${spec}${notes.length ? ` ${capital(notes.join(', '))}.` : ''}\n  ${s.prompt}`;
 }
 
-/** A draft checked into a record: the timing parsed, the zone known. */
+/** A draft checked into a record for an app, `{ id, name }`: the timing
+ *  parsed, the zone known. */
 function makeSchedule(draft, app) {
   const title = String(draft.title ?? '').trim();
   const prompt = String(draft.prompt ?? '').trim();
@@ -166,7 +271,8 @@ function makeSchedule(draft, app) {
   const timezone = checkZone(draft.timezone ? String(draft.timezone) : localZone());
   const s = {
     id: shortId(),
-    app,
+    app: app.id,
+    appName: app.name,
     title,
     prompt,
     timezone,
@@ -175,18 +281,26 @@ function makeSchedule(draft, app) {
     notify: ['all', 'failures', 'none'].includes(draft.notify) ? draft.notify : 'all',
     createdAt: new Date().toISOString(),
   };
-  if (draft.spec) {
-    parseCron(draft.spec);
-    s.spec = String(draft.spec).trim();
-  } else {
-    const at = new Date(String(draft.once));
-    if (Number.isNaN(at.getTime())) throw new Error(`"${draft.once}" is not a date-time`);
-    s.once = at.toISOString();
-  }
+  setTiming(s, draft);
   if (typeof draft.project === 'string' && draft.project) s.project = draft.project;
   if (typeof draft.model === 'string' && draft.model) s.model = draft.model;
   s.nextRunAt = nextOf(s, Date.now());
   return s;
+}
+
+/** A spec or one instant, checked, in place of the schedule's timing. */
+function setTiming(s, draft) {
+  if (draft.spec) {
+    parseCron(draft.spec);
+    s.spec = String(draft.spec).trim();
+    delete s.once;
+  } else {
+    const at = new Date(String(draft.once));
+    if (Number.isNaN(at.getTime())) throw new Error(`"${draft.once}" is not a date-time`);
+    s.once = at.toISOString();
+    delete s.spec;
+  }
+  s.spent = false;
 }
 
 function nextOf(s, from) {
@@ -200,6 +314,22 @@ function runsOf(id) {
   return state.runs.filter((r) => r.schedule === id);
 }
 
+/** The text of the last reply in a conversation, cut for a notification. */
+async function answerOf(session) {
+  const opened = await ctx.sessions.open(session);
+  const reply = [...opened.entries]
+    .reverse()
+    .find((e) => e.type === 'agent.message' && e.parts.some((p) => p.kind === 'text' && p.text.trim()));
+  if (!reply) return '';
+  const text = reply.parts
+    .filter((p) => p.kind === 'text')
+    .map((p) => p.text)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > NOTICE_CHARS ? `${text.slice(0, NOTICE_CHARS - 1)}…` : text;
+}
+
 async function finished(session, stopReason) {
   const run = state.runs.find((r) => r.session === session && !r.finishedAt);
   if (!run) return;
@@ -210,9 +340,12 @@ async function finished(session, stopReason) {
     s.running = false;
     const failed = stopReason !== 'end_turn';
     if (s.notify === 'all' || (s.notify === 'failures' && failed)) {
+      const answer = await answerOf(session).catch(() => '');
       await ctx.notify({
         title: s.title,
-        body: failed ? `The run ended: ${stopReason}.` : 'The run finished.',
+        body: failed
+          ? `The run ended early (${stopReason}).${answer ? ` ${answer}` : ''}`
+          : answer || 'The run finished with no answer.',
         session,
       });
     }
@@ -220,7 +353,22 @@ async function finished(session, stopReason) {
   await changed();
 }
 
-/** Starts the conversation a schedule asks for and records the run. */
+/** A run that could not start: recorded as failed, told once. */
+async function failedToStart(s, run, reason) {
+  s.running = false;
+  run.finishedAt = new Date().toISOString();
+  run.stopReason = 'refused';
+  run.error = reason;
+  state.runs = [...state.runs, run];
+  ctx.log('error', `${s.title} could not start in ${s.app}: ${reason}`);
+  if (s.notify !== 'none') {
+    await ctx.notify({ title: s.title, body: `The run could not start: ${reason}` });
+  }
+  await changed();
+}
+
+/** Starts the conversation a schedule asks for and records the run. A
+ *  schedule whose app is gone or off is switched off with the reason. */
 async function fire(s, why) {
   if (s.running) return;
   s.running = true;
@@ -228,10 +376,16 @@ async function fire(s, why) {
   if (s.once) s.spent = true;
   s.nextRunAt = s.once ? null : nextOf(s, Date.now());
   const run = { id: shortId(), schedule: s.id, startedAt: s.lastRunAt, why };
+  if (!(await candidates()).some((a) => a.id === s.app)) {
+    s.enabled = false;
+    s.offReason = `${s.appName} is not installed, not enabled, or has no agent`;
+    await failedToStart(s, run, `${s.offReason}; the schedule is switched off`);
+    return;
+  }
   try {
     const { id } = await ctx.sessions.create({
       app: s.app,
-      title: `${s.title} · ${s.lastRunAt.slice(0, 16).replace('T', ' ')}`,
+      title: `${s.title}, ${stamp(s.lastRunAt, s.timezone)}`,
       message: s.prompt,
       ...(s.project && { project: s.project }),
       ...(s.model && { model: s.model }),
@@ -244,21 +398,13 @@ async function fire(s, why) {
       .then((end) => finished(id, end.stopReason))
       .catch((e) => ctx.log('warn', `wait on ${id} failed: ${e.message}`));
   } catch (e) {
-    s.running = false;
-    run.finishedAt = new Date().toISOString();
-    run.stopReason = 'refused';
-    run.error = e.message;
-    state.runs = [...state.runs, run];
-    ctx.log('error', `${s.title} could not start in ${s.app}: ${e.message}`);
-    if (s.notify !== 'none') {
-      await ctx.notify({ title: s.title, body: `The run could not start: ${e.message}` });
-    }
-    await changed();
+    await failedToStart(s, run, e.message);
   }
 }
 
 /** Every due schedule fires; a window the computer slept through fires
- *  once or is skipped as the schedule says. */
+ *  once or is skipped as the schedule says. A day after the last ask for
+ *  suggestions, another one runs. */
 async function tick() {
   const now = Date.now();
   for (const s of Object.values(state.schedules)) {
@@ -272,6 +418,9 @@ async function tick() {
       continue;
     }
     await fire(s, missed ? 'catch-up' : 'due');
+  }
+  if (!state.suggestedAt || now - Date.parse(state.suggestedAt) > SUGGEST_EVERY_MS) {
+    void suggestOwn().catch((e) => ctx.log('warn', `no suggestions: ${e.message}`));
   }
 }
 
@@ -298,15 +447,157 @@ async function reconcile() {
   await changed();
 }
 
+// ---- Suggestions of its own -------------------------------------------------
+
+const SUGGESTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    suggestions: {
+      type: 'array',
+      maxItems: SUGGEST_MAX,
+      items: {
+        type: 'object',
+        properties: {
+          app: { type: 'string' },
+          title: { type: 'string' },
+          prompt: { type: 'string' },
+          spec: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['app', 'title', 'prompt', 'spec', 'reason'],
+      },
+    },
+  },
+  required: ['suggestions'],
+};
+
+/** The key a suggestion is known by, so a dismissed one never returns. */
+const keyOf = (app, title) => `${app}:${String(title).trim().toLowerCase()}`;
+
+/**
+ * Asks the model for up to three recurring tasks worth having in the apps
+ * with an agent, given what each app says it does and what is scheduled
+ * already. Each answer waits as a suggestion; one the person dismissed,
+ * one already scheduled or suggested, and one that does not parse are
+ * left out.
+ */
+async function suggestOwn() {
+  if (suggesting) return;
+  suggesting = true;
+  try {
+    state.suggestedAt = new Date().toISOString();
+    await save();
+    const apps = await candidates();
+    if (apps.length === 0) return;
+    const taken = new Set([
+      ...Object.values(state.schedules).map((s) => keyOf(s.app, s.title)),
+      ...state.suggestions.map((g) => keyOf(g.app, g.title)),
+      ...state.dismissed,
+    ]);
+    const request = [
+      'The apps on this computer that hold conversations:',
+      ...apps.map((a) => `- ${a.id}: ${a.name}. ${a.description}`),
+      '',
+      'Already scheduled or turned down:',
+      ...(taken.size > 0 ? [...taken].map((k) => `- ${k}`) : ['- nothing']),
+      '',
+      `Suggest up to ${SUGGEST_MAX} recurring tasks a person would want, each for one of these apps: its id as app, a title of a few words, the prompt the app is told when it runs, a five-field cron expression as spec, and the reason in one sentence. Suggest nothing that repeats what is listed above.`,
+    ].join('\n');
+    let raw = '';
+    for await (const delta of ctx.models.complete({
+      messages: [
+        { role: 'system', content: 'You suggest useful recurring tasks for a person\'s apps.' },
+        { role: 'user', content: request },
+      ],
+      format: { name: 'suggestions', schema: SUGGESTION_SCHEMA },
+      reasoning: 'none',
+    })) {
+      if ('done' in delta) {
+        if (delta.error) throw new Error(delta.error);
+        break;
+      }
+      if (!delta.reasoning) raw += delta.text;
+    }
+    const answer = JSON.parse(raw.trim());
+    let added = 0;
+    for (const g of answer.suggestions ?? []) {
+      const app = apps.find((a) => a.id === g.app);
+      if (!app || taken.has(keyOf(g.app, g.title)) || added >= SUGGEST_MAX) continue;
+      let draft;
+      try {
+        draft = makeSchedule({ title: g.title, prompt: g.prompt, spec: g.spec }, app);
+      } catch {
+        continue;
+      }
+      state.suggestions.push({
+        id: draft.id,
+        app: app.id,
+        appName: app.name,
+        title: draft.title,
+        prompt: draft.prompt,
+        spec: draft.spec,
+        timezone: draft.timezone,
+        reason: String(g.reason ?? '').trim(),
+        at: new Date().toISOString(),
+      });
+      taken.add(keyOf(app.id, draft.title));
+      added += 1;
+    }
+    ctx.log('info', `suggested ${added} schedules`);
+    if (added > 0) await changed();
+  } finally {
+    suggesting = false;
+  }
+}
+
+// ---- The surface ------------------------------------------------------------
+
+/** A schedule as the page draws it: the record with its words. */
+function shown(s, nameOf) {
+  return { ...s, words: capital(rhythmWords(s)), appName: nameOf(s) };
+}
+
+/** Applies the fields a patch gives; the rest stay. */
+async function patch(s, input) {
+  if (typeof input.title === 'string' && input.title.trim()) s.title = input.title.trim();
+  if (typeof input.prompt === 'string' && input.prompt.trim()) s.prompt = input.prompt.trim();
+  if (typeof input.app === 'string' && input.app) {
+    const app = await resolveApp(null, input.app);
+    s.app = app.id;
+    s.appName = app.name;
+  }
+  if (typeof input.timezone === 'string' && input.timezone) s.timezone = checkZone(input.timezone);
+  if ((typeof input.spec === 'string' && input.spec) || (typeof input.once === 'string' && input.once)) {
+    setTiming(s, input);
+  }
+  if (['all', 'failures', 'none'].includes(input.notify)) s.notify = input.notify;
+  if (typeof input.model === 'string') {
+    if (input.model) s.model = input.model;
+    else delete s.model;
+  }
+  if (typeof input.project === 'string') {
+    if (input.project) s.project = input.project;
+    else delete s.project;
+  }
+  if (typeof input.enabled === 'boolean') {
+    s.enabled = input.enabled;
+    if (input.enabled) delete s.offReason;
+  }
+  s.nextRunAt = s.spent ? null : nextOf(s, Date.now());
+}
+
 module.exports = {
   async activate(app) {
     ctx = app;
     const held = await ctx.store.get('state');
-    if (held && typeof held === 'object') state = { schedules: {}, runs: [], suggestions: [], ...held };
+    if (held && typeof held === 'object') state = { ...state, ...held };
     for (const s of Object.values(state.schedules)) {
       if (!s.running && !s.spent) s.nextRunAt = s.nextRunAt ?? nextOf(s, Date.now());
     }
     ctx.sessions.on('finished', (r) => void finished(r.session, r.stopReason));
+    ctx.apps.on('changed', () =>
+      void suggestOwn().catch((e) => ctx.log('warn', `no suggestions: ${e.message}`)),
+    );
     await reconcile();
     timer = setInterval(() => void tick().catch((e) => ctx.log('error', e.message)), TICK_MS);
     await tick();
@@ -317,17 +608,19 @@ module.exports = {
   },
   tools: {
     async create(input, run) {
-      const s = makeSchedule(input, callerOf(run, input.app));
+      const app = await resolveApp(run, input.app);
+      const s = makeSchedule(input, app);
       state.schedules[s.id] = s;
       await changed();
-      return `Scheduled "${s.title}" ${whenOf(s)} in ${s.app} as ${s.id}. Nothing happens until it fires${s.nextRunAt ? `, next at ${s.nextRunAt}` : ''}.`;
+      return `Scheduled ${scheduleWords(s, await appNames())} Its id is ${s.id}.`;
     },
     async suggest(input, run) {
-      const app = callerOf(run, input.app);
-      const draft = makeSchedule({ ...input, spec: input.spec }, app);
+      const app = await resolveApp(run, input.app);
+      const draft = makeSchedule(input, app);
       const suggestion = {
         id: draft.id,
-        app,
+        app: app.id,
+        appName: app.name,
         title: draft.title,
         prompt: draft.prompt,
         spec: draft.spec,
@@ -337,28 +630,20 @@ module.exports = {
       };
       state.suggestions.push(suggestion);
       await changed();
-      return `Suggested "${suggestion.title}" ${whenOf(suggestion)}; it waits on the Schedules page for the person's approval.`;
+      return `Suggested ${scheduleWords(draft, await appNames())} It waits on the Schedules page for the person's approval.`;
     },
     async list() {
       const all = Object.values(state.schedules);
-      return all.length ? all.map(describe).join('\n') : 'No schedules.';
+      if (all.length === 0) return 'No schedules.';
+      const nameOf = await appNames();
+      return all.map((s) => describe(s, nameOf)).join('\n');
     },
     async update(input) {
       const s = state.schedules[String(input.id)];
       if (!s) throw new Error(`no schedule ${input.id}`);
-      if (typeof input.title === 'string' && input.title.trim()) s.title = input.title.trim();
-      if (typeof input.prompt === 'string' && input.prompt.trim()) s.prompt = input.prompt.trim();
-      if (typeof input.timezone === 'string' && input.timezone) s.timezone = checkZone(input.timezone);
-      if (typeof input.spec === 'string' && input.spec) {
-        parseCron(input.spec);
-        s.spec = input.spec.trim();
-        delete s.once;
-        s.spent = false;
-      }
-      if (typeof input.enabled === 'boolean') s.enabled = input.enabled;
-      s.nextRunAt = s.spent ? null : nextOf(s, Date.now());
+      await patch(s, input);
       await changed();
-      return `Changed ${s.id}: ${describe(s)}`;
+      return `Changed ${s.id}: ${scheduleWords(s, await appNames())}`;
     },
     async remove(input) {
       const s = state.schedules[String(input.id)];
@@ -370,28 +655,37 @@ module.exports = {
     },
   },
   invoke: {
-    list: () => ({
-      schedules: Object.values(state.schedules),
-      runs: [...state.runs].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)),
-      suggestions: state.suggestions,
-      zone: localZone(),
-    }),
-    async apps() {
-      const all = await ctx.apps.list();
-      return all.filter((a) => a.agent && a.id !== ctx.app.id);
+    async list() {
+      const nameOf = await appNames();
+      return {
+        schedules: Object.values(state.schedules).map((s) => shown(s, nameOf)),
+        runs: [...state.runs].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)),
+        suggestions: state.suggestions.map((g) => shown(g, nameOf)),
+        zone: localZone(),
+      };
     },
+    apps: () => candidates(),
     async choices({ app }) {
-      const [models, projects] = await Promise.all([ctx.models.for(app), ctx.projects.list(app)]);
-      return { models, projects };
+      const [models, projects, effective] = await Promise.all([
+        ctx.models.for(app),
+        ctx.projects.list(app),
+        ctx.models.effective('chat', app),
+      ]);
+      return { models, projects, effective };
     },
     async create({ draft }) {
-      const s = makeSchedule(draft, String(draft.app));
+      const app = await resolveApp(null, draft.app);
+      const s = makeSchedule(draft, app);
       state.schedules[s.id] = s;
       await changed();
       return s;
     },
-    async set({ id, patch }) {
-      return module.exports.tools.update({ id, ...patch });
+    async set({ id, patch: fields }) {
+      const s = state.schedules[String(id)];
+      if (!s) throw new Error(`no schedule ${id}`);
+      await patch(s, fields);
+      await changed();
+      return s;
     },
     async remove({ id }) {
       return module.exports.tools.remove({ id });
@@ -406,13 +700,15 @@ module.exports = {
       const i = state.suggestions.findIndex((x) => x.id === id);
       if (i < 0) throw new Error('no such suggestion');
       const [sg] = state.suggestions.splice(i, 1);
-      const s = makeSchedule(sg, sg.app);
+      const s = makeSchedule(sg, { id: sg.app, name: sg.appName });
       state.schedules[s.id] = s;
       await changed();
       return s;
     },
     async dismiss({ id }) {
+      const sg = state.suggestions.find((x) => x.id === id);
       state.suggestions = state.suggestions.filter((x) => x.id !== id);
+      if (sg) state.dismissed = [...new Set([...state.dismissed, keyOf(sg.app, sg.title)])];
       await changed();
       return null;
     },

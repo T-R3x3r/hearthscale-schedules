@@ -1,33 +1,84 @@
 {
   "id": "schedules",
   "name": "Schedules",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "api": 3,
   "icon": "icon.svg",
   "description": "The one place every recurring task is authored and listed. An agent asks it for a timed run of itself; it starts the conversation when the time comes, records the run and tells you about it.",
-  "environment": { "kind": "process", "lifetime": "service" },
-  "uses": ["sessions", "sessions.create", "notifications"],
+  "environment": {
+    "kind": "process",
+    "lifetime": "service"
+  },
+  "uses": [
+    "sessions",
+    "sessions.create",
+    "notifications"
+  ],
+  "models": {
+    "chat": {
+      "required": false
+    }
+  },
   "contributes": {
-    "main": { "kind": "own", "title": "Schedules" }
+    "main": {
+      "kind": "own",
+      "title": "Schedules"
+    }
   },
   "tools": [
     {
       "name": "create",
       "title": "Schedule a run",
-      "description": "Create a schedule that starts a conversation in an app at a time, with a prompt. spec is a five-field cron expression (minute hour day-of-month month day-of-week), so every weekday at nine is \"0 9 * * 1-5\" and every second day at nine is \"0 9 */2 * *\"; once is one ISO date-time instead. The expression is read in timezone, the machine's own zone when none is given. prompt is what the app will be told when it fires, written as an instruction, because the fire opens a fresh conversation with that text and nothing else. app is the app the conversation starts in; the calling app when omitted. catchUp is \"once\" to run a window the computer slept through, or \"skip\" to wait for the next one.",
+      "description": "Create a schedule that starts a conversation in an app at a time, with a prompt. spec is a five-field cron expression (minute hour day-of-month month day-of-week): every minute is \"* * * * *\", every hour at minute 0 is \"0 * * * *\", every weekday at nine is \"0 9 * * 1-5\" and every second day at nine is \"0 9 */2 * *\"; once is one ISO date-time instead. The expression is read in timezone, the machine's own zone when none is given. prompt is what the app will be told when it fires, written as an instruction, because the fire opens a fresh conversation with that text and nothing else. catchUp is \"once\" to run a window the computer slept through, or \"skip\" to wait for the next one. The answer states the schedule in words with its next run: tell the person, so a wrong time shows.",
       "input": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "description": "A few words naming the schedule, as a person reads it in a list" },
-          "prompt": { "type": "string", "description": "What the app will be told when it fires" },
-          "spec": { "type": "string", "description": "A five-field cron expression; name this or once, never both" },
-          "once": { "type": "string", "description": "One ISO date-time to fire at; name this or spec, never both" },
-          "timezone": { "type": "string", "description": "An IANA zone name the expression is read in; the machine's own zone when omitted" },
-          "app": { "type": "string", "description": "The app the conversation starts in; the calling app when omitted" },
-          "catchUp": { "type": "string", "enum": ["skip", "once"], "description": "What to do about a window the computer slept through; skip unless given" },
-          "notify": { "type": "string", "enum": ["all", "failures", "none"], "description": "Which runs tell the person: every one, only a failed one, or none; all unless given" }
+          "title": {
+            "type": "string",
+            "description": "A few words naming the schedule, as a person reads it in a list"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "What the app will be told when it fires"
+          },
+          "spec": {
+            "type": "string",
+            "description": "A five-field cron expression; name this or once, never both"
+          },
+          "once": {
+            "type": "string",
+            "description": "One ISO date-time to fire at; name this or spec, never both"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "An IANA zone name the expression is read in; the machine's own zone when omitted"
+          },
+          "app": {
+            "type": "string",
+            "description": "The id of an installed app with an agent; leave it out to run in your own app"
+          },
+          "catchUp": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "once"
+            ],
+            "description": "What to do about a window the computer slept through; skip unless given"
+          },
+          "notify": {
+            "type": "string",
+            "enum": [
+              "all",
+              "failures",
+              "none"
+            ],
+            "description": "Which runs tell the person: every one, only a failed one, or none; all unless given"
+          }
         },
-        "required": ["title", "prompt"]
+        "required": [
+          "title",
+          "prompt"
+        ]
       },
       "mutating": true,
       "outbound": false
@@ -39,14 +90,34 @@
       "input": {
         "type": "object",
         "properties": {
-          "title": { "type": "string" },
-          "prompt": { "type": "string" },
-          "spec": { "type": "string", "description": "A five-field cron expression" },
-          "timezone": { "type": "string" },
-          "app": { "type": "string", "description": "The app the conversation starts in; the calling app when omitted" },
-          "reason": { "type": "string", "description": "Why this schedule is worth having, in one sentence" }
+          "title": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "spec": {
+            "type": "string",
+            "description": "A five-field cron expression"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "app": {
+            "type": "string",
+            "description": "The id of an installed app with an agent; leave it out to run in your own app"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this schedule is worth having, in one sentence"
+          }
         },
-        "required": ["title", "prompt", "spec", "reason"]
+        "required": [
+          "title",
+          "prompt",
+          "spec",
+          "reason"
+        ]
       },
       "mutating": true,
       "outbound": false
@@ -54,26 +125,59 @@
     {
       "name": "list",
       "title": "List the schedules",
-      "description": "Every schedule: its id, the app it runs in, when it runs, what it will say, whether it is on, and when it last ran.",
-      "input": { "type": "object", "properties": {} },
+      "description": "Every schedule: its id, when it runs in words and as cron, the app it runs in, what it will say, whether it is on, and when it last ran.",
+      "input": {
+        "type": "object",
+        "properties": {}
+      },
       "mutating": false,
       "outbound": false
     },
     {
       "name": "update",
       "title": "Change a schedule",
-      "description": "Retime a schedule, rewrite its prompt, or switch it off and on, naming it by its id. Only the fields given change.",
+      "description": "Change a schedule by its id: retime it with spec or once, rewrite its title or prompt, move it to another app, change which runs notify, or switch it off and on. Only the fields given change.",
       "input": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "title": { "type": "string" },
-          "prompt": { "type": "string" },
-          "spec": { "type": "string" },
-          "timezone": { "type": "string" },
-          "enabled": { "type": "boolean" }
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "spec": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "once": {
+            "type": "string",
+            "description": "One ISO date-time to fire at, in place of spec"
+          },
+          "app": {
+            "type": "string",
+            "description": "The id of an installed app with an agent"
+          },
+          "notify": {
+            "type": "string",
+            "enum": [
+              "all",
+              "failures",
+              "none"
+            ]
+          }
         },
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "mutating": true,
       "outbound": false
@@ -82,10 +186,28 @@
       "name": "remove",
       "title": "Remove a schedule",
       "description": "Delete a schedule by its id. It stops at once.",
-      "input": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] },
+      "input": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
       "mutating": true,
       "outbound": false
     }
   ],
-  "capabilities": { "tools": ["create", "suggest", "list", "update", "remove"] }
+  "capabilities": {
+    "tools": [
+      "create",
+      "suggest",
+      "list",
+      "update",
+      "remove"
+    ]
+  }
 }

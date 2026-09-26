@@ -9,20 +9,6 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 const esc = (text) =>
   String(text ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-/** A cron expression in the words a person reads. */
-function rhythm(s) {
-  if (s.once) return `once at ${new Date(s.once).toLocaleString()}`;
-  const [m, h, dom, mon, dow] = s.spec.split(/\s+/);
-  const at = /^\d+$/.test(m) && /^\d+$/.test(h) ? ` at ${h}:${m.padStart(2, '0')}` : '';
-  if (m === '*' && h === '*') return 'every minute';
-  if (dom === '*' && mon === '*' && dow === '*' && at) return `daily${at}`;
-  if (dom === '*' && mon === '*' && dow === '1-5' && at) return `weekdays${at}`;
-  if (dom === '*' && mon === '*' && /^\d$/.test(dow) && at) return `${DAYS[Number(dow)]}s${at}`;
-  if (/^\*\/\d+$/.test(dom) && mon === '*' && dow === '*' && at) return `every ${dom.slice(2)} days${at}`;
-  if (/^\d+$/.test(dom) && mon === '*' && dow === '*' && at) return `monthly on day ${dom}${at}`;
-  return `cron ${s.spec}`;
-}
-
 /** The expression a form's repeat, day and time make. */
 function specOf(repeat, on, at, custom) {
   const [h, m] = at.split(':').map(Number);
@@ -46,9 +32,9 @@ export default function activate(client) {
   client.view((element) => {
     let listing = { schedules: [], runs: [], suggestions: [], zone: '' };
     let apps = [];
-    let choices = { models: [], projects: [] };
+    let choices = { models: [], projects: [], effective: null };
     let notice = '';
-    const form = { app: '', title: '', prompt: '', repeat: 'daily', on: 'Monday', at: '09:00', custom: '', once: '', model: '', project: '' };
+    const form = { app: '', title: '', prompt: '', repeat: 'daily', on: 'Monday', at: '09:00', custom: '', once: '', model: '', project: '', notify: 'all' };
 
     const draw = () => {
       const scheduleRows = listing.schedules
@@ -57,13 +43,13 @@ export default function activate(client) {
           <div class="hs-setrow" style="display:flex;flex-direction:column;gap:4px;padding:10px 14px" data-id="${esc(s.id)}">
             <div style="display:flex;align-items:center;gap:10px">
               <strong style="flex:1">${esc(s.title)}</strong>
-              <span style="color:var(--mut);font-size:var(--fs-sm)">${esc(s.app)} · ${esc(rhythm(s))}${s.enabled ? '' : ' · off'}${s.running ? ' · running' : ''}</span>
+              <span style="color:var(--mut);font-size:var(--fs-sm)">${esc(s.words)}, in ${esc(s.appName)}${s.enabled ? '' : `, off${s.offReason ? `: ${esc(s.offReason)}` : ''}`}${s.running ? ', running' : ''}</span>
               <button class="hs-glassbtn hs-inktext" data-act="run" data-id="${esc(s.id)}">Run now</button>
               <button class="hs-glassbtn hs-inktext" data-act="toggle" data-id="${esc(s.id)}">${s.enabled ? 'Switch off' : 'Switch on'}</button>
               <button class="hs-glassbtn hs-inkbad" data-act="remove" data-id="${esc(s.id)}">Remove</button>
             </div>
             <div style="color:var(--mut);font-size:var(--fs-sm)">${esc(s.prompt)}</div>
-            <div style="color:var(--dim);font-size:var(--fs-sm)">${s.nextRunAt && s.enabled && !s.spent ? `next ${esc(when(s.nextRunAt))}` : s.spent ? 'ran once' : 'not scheduled'}${s.lastRunAt ? ` · last ${esc(when(s.lastRunAt))}` : ''}</div>
+            <div style="color:var(--dim);font-size:var(--fs-sm)">${s.nextRunAt && s.enabled && !s.spent ? `next ${esc(when(s.nextRunAt))}` : s.spent ? 'ran once' : 'not scheduled'}${s.lastRunAt ? `, last ${esc(when(s.lastRunAt))}` : ''}</div>
           </div>`,
         )
         .join('');
@@ -73,7 +59,7 @@ export default function activate(client) {
           <div class="hs-setrow" style="display:flex;flex-direction:column;gap:4px;padding:10px 14px">
             <div style="display:flex;align-items:center;gap:10px">
               <strong style="flex:1">${esc(g.title)}</strong>
-              <span style="color:var(--mut);font-size:var(--fs-sm)">${esc(g.app)} · ${esc(rhythm(g))}</span>
+              <span style="color:var(--mut);font-size:var(--fs-sm)">${esc(g.words)}, in ${esc(g.appName)}</span>
               <button class="hs-glassbtn hs-inktext" data-act="approve" data-id="${esc(g.id)}">Approve</button>
               <button class="hs-glassbtn hs-inktext" data-act="dismiss" data-id="${esc(g.id)}">Dismiss</button>
             </div>
@@ -88,14 +74,20 @@ export default function activate(client) {
           return `
           <div class="hs-setrow" style="display:flex;align-items:center;gap:10px;padding:8px 14px;font-size:var(--fs-sm)" data-run="${esc(r.id)}">
             <span style="flex:1">${esc(s?.title ?? r.schedule)}</span>
-            <span style="color:var(--mut)">${esc(when(r.startedAt))} · ${esc(r.why)}</span>
+            <span style="color:var(--mut)">${esc(when(r.startedAt))}, ${esc(r.why)}</span>
             <span style="color:${r.finishedAt ? (r.stopReason === 'end_turn' ? 'var(--ok)' : 'var(--warn)') : 'var(--mut)'}">${esc(r.finishedAt ? r.stopReason + (r.error ? `: ${r.error}` : '') : 'running')}</span>
             ${r.session ? `<button class="hs-glassbtn hs-inktext" data-act="open" data-session="${esc(r.session)}">Open</button>` : ''}
           </div>`;
         })
         .join('');
       const appOptions = apps.map((a) => `<option value="${esc(a.id)}"${a.id === form.app ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
-      const modelOptions = ['<option value="">The app\'s own choice</option>', ...choices.models.map((m) => `<option value="${esc(m.id)}"${m.id === form.model ? ' selected' : ''}>${esc(m.name)}</option>`)].join('');
+      const automatic = choices.effective
+        ? choices.effective.card
+          ? `Automatic (${choices.models.find((m) => m.id === choices.effective.card)?.name ?? choices.effective.card})`
+          : `No model: ${choices.effective.reason}`
+        : 'Automatic';
+      const modelOptions = [`<option value="">${esc(automatic)}</option>`, ...choices.models.map((m) => `<option value="${esc(m.id)}"${m.id === form.model ? ' selected' : ''}>${esc(m.name)}</option>`)].join('');
+      const notifyOptions = [['all', 'All runs'], ['failures', 'Failures only'], ['none', 'None']].map(([v, label]) => `<option value="${v}"${form.notify === v ? ' selected' : ''}>${label}</option>`).join('');
       const projectOptions = ['<option value="">No project</option>', ...choices.projects.map((p) => `<option value="${esc(p.id)}"${p.id === form.project ? ' selected' : ''}>${esc(p.name)}</option>`)].join('');
       const timeOptions = [];
       for (let h = 0; h < 24; h += 1) for (const m of ['00', '15', '30', '45']) timeOptions.push(`${String(h).padStart(2, '0')}:${m}`);
@@ -122,6 +114,7 @@ export default function activate(client) {
               ${form.repeat === 'once' ? `<label>At</label><input id="f-once" class="hs-in" type="datetime-local" value="${esc(form.once)}" />` : `<label>Time</label><select id="f-at" class="hs-in">${timeOptions.map((t) => `<option${form.at === t ? ' selected' : ''}>${t}</option>`).join('')}</select>`}
               <label>Model</label><select id="f-model" class="hs-in">${modelOptions}</select>
               <label>Project</label><select id="f-project" class="hs-in">${projectOptions}</select>
+              <label>Notify</label><select id="f-notify" class="hs-in">${notifyOptions}</select>
               <span></span><div><button id="f-create" class="hs-glassbtn hs-inktext">Create</button></div>
             </div>
           </section>
@@ -142,6 +135,7 @@ export default function activate(client) {
         form.once = element.querySelector('#f-once')?.value ?? form.once;
         form.model = element.querySelector('#f-model')?.value ?? form.model;
         form.project = element.querySelector('#f-project')?.value ?? form.project;
+        form.notify = element.querySelector('#f-notify')?.value ?? form.notify;
       };
       element.querySelector('#f-repeat')?.addEventListener('change', () => {
         read();
@@ -163,6 +157,7 @@ export default function activate(client) {
             : { spec: specOf(form.repeat, form.on, form.at, form.custom) }),
           ...(form.model && { model: form.model }),
           ...(form.project && { project: form.project }),
+          notify: form.notify,
         };
         await act(() => client.invoke('create', { draft }));
         form.title = '';
@@ -194,7 +189,7 @@ export default function activate(client) {
       await load();
     };
     const loadChoices = async () => {
-      choices = form.app ? await client.invoke('choices', { app: form.app }) : { models: [], projects: [] };
+      choices = form.app ? await client.invoke('choices', { app: form.app }) : { models: [], projects: [], effective: null };
     };
     const load = async () => {
       listing = await client.invoke('list');
