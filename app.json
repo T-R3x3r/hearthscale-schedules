@@ -1,8 +1,8 @@
 {
   "id": "schedules",
   "name": "Schedules",
-  "version": "1.0.0",
-  "api": 2,
+  "version": "1.0.1",
+  "api": 3,
   "icon": "icon.svg",
   "description": "The one place every recurring task is authored and listed. An agent asks it for a timed run of itself; it starts the conversation when the time comes, records the run and tells you about it.",
   "environment": { "kind": "process", "lifetime": "service" },
