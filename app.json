@@ -2,7 +2,7 @@
   "id": "schedules",
   "name": "Schedules",
   "version": "2.0.0",
-  "api": 4,
+  "api": 6,
   "icon": {
     "light": "assets/icon-light.svg",
     "dark": "assets/icon-dark.svg"
@@ -24,12 +24,6 @@
   "models": {
     "chat": {
       "required": false
-    }
-  },
-  "contributes": {
-    "main": {
-      "kind": "own",
-      "title": "Schedules"
     }
   },
   "surfaces": [

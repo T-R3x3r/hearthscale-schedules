@@ -42,9 +42,6 @@ when the host loads it again.
 `ui/pnpm-workspace.yaml` keeps the build its own project: without it, pnpm
 joins any workspace in a folder above.
 
-`contributes.main` stands beside the `schedules` surface: the client lists
-an app in the rail by it.
-
 ## Releasing
 
 Install the Hearthscale registry's GitHub App on this repository once. Then
