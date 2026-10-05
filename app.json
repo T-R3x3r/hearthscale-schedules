@@ -1,7 +1,7 @@
 {
   "id": "schedules",
   "name": "Schedules",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "api": 4,
   "icon": {
     "light": "assets/icon-light.svg",
@@ -15,7 +15,11 @@
   "uses": [
     "sessions",
     "sessions.create",
-    "notifications"
+    "notifications",
+    "store",
+    "events",
+    "models",
+    "surfaces.open"
   ],
   "models": {
     "chat": {
@@ -26,15 +30,19 @@
     "main": {
       "kind": "own",
       "title": "Schedules"
-    },
-    "panels": [
-      {
-        "id": "schedule",
-        "title": "Schedule",
-        "instances": "many"
-      }
-    ]
+    }
   },
+  "surfaces": [
+    {
+      "id": "schedules",
+      "kind": "view",
+      "title": "Schedules",
+      "entry": "views/schedules.js",
+      "placements": [
+        "rail"
+      ]
+    }
+  ],
   "tools": [
     {
       "name": "create",
@@ -209,6 +217,289 @@
       },
       "mutating": true,
       "outbound": false
+    },
+    {
+      "name": "listing",
+      "title": "Read every schedule",
+      "description": "Every schedule with its rhythm in words and the name of its app, every run newest first, and the suggestions that wait.",
+      "input": {
+        "type": "object",
+        "properties": {}
+      },
+      "mutating": false,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "apps",
+      "title": "Read the apps a schedule runs in",
+      "description": "The enabled apps with an agent, each with its id, name and icon.",
+      "input": {
+        "type": "object",
+        "properties": {}
+      },
+      "mutating": false,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "choices",
+      "title": "Read an app's models and projects",
+      "description": "The models and projects a schedule of one app may run on and in, and the model the app runs on by itself.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ]
+      },
+      "mutating": false,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "words",
+      "title": "Read a rhythm in words",
+      "description": "A cron expression in the words a person reads; one that does not parse is refused with the reason.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "spec": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "mutating": false,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "add",
+      "title": "Make a schedule",
+      "description": "Makes a schedule from the view's form; its expression is read in timezone.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "draft": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "string",
+                "description": "The id of the app the schedule runs in"
+              },
+              "title": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "notify": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "failures",
+                  "none"
+                ]
+              },
+              "model": {
+                "type": "string",
+                "description": "A model card; empty for the app's own choice"
+              },
+              "project": {
+                "type": "string",
+                "description": "A project of the app; empty for none"
+              },
+              "spec": {
+                "type": "string",
+                "description": "A five-field cron expression"
+              },
+              "once": {
+                "type": "string",
+                "description": "One ISO date-time, in place of spec"
+              },
+              "timezone": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app",
+              "title",
+              "prompt"
+            ]
+          }
+        },
+        "required": [
+          "draft"
+        ]
+      },
+      "mutating": true,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "set",
+      "title": "Save a schedule",
+      "description": "Saves the fields the patch gives, or switches the schedule off and on; the rest stay.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "string",
+                "description": "The id of the app the schedule runs in"
+              },
+              "title": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "notify": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "failures",
+                  "none"
+                ]
+              },
+              "model": {
+                "type": "string",
+                "description": "A model card; empty for the app's own choice"
+              },
+              "project": {
+                "type": "string",
+                "description": "A project of the app; empty for none"
+              },
+              "spec": {
+                "type": "string",
+                "description": "A five-field cron expression"
+              },
+              "once": {
+                "type": "string",
+                "description": "One ISO date-time, in place of spec"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "required": [
+          "id",
+          "patch"
+        ]
+      },
+      "mutating": true,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "delete",
+      "title": "Delete a schedule",
+      "description": "Deletes a schedule and its record of runs. It stops at once.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "mutating": true,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "runNow",
+      "title": "Run a schedule now",
+      "description": "Starts the conversation the schedule asks for now, outside its time.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "mutating": true,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "approve",
+      "title": "Add a suggested schedule",
+      "description": "Makes the suggestion a schedule.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "mutating": true,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
+    },
+    {
+      "name": "dismiss",
+      "title": "Dismiss a suggestion",
+      "description": "Removes the suggestion; the same one is not suggested again.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "mutating": true,
+      "outbound": false,
+      "visibility": [
+        "app"
+      ]
     }
   ],
   "capabilities": {

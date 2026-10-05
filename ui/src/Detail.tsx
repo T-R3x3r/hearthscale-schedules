@@ -1,15 +1,23 @@
 /**
- * The panel: one schedule to read and change, with its runs, or a new one
- * to make. The form keeps the person's edits while the record changes
- * under it, and Save shows only while there are edits. A tab whose
- * schedule was deleted says so.
+ * One schedule to read and change, with its runs, or a new one to make,
+ * in place of the list. The form keeps the person's edits while the
+ * record changes under it, and Save shows only while there are edits. A
+ * schedule deleted while it shows says so.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { RealmClient } from '@hearthscale/app';
+import {
+  messageOf,
+  type AppFacts,
+  type Backend,
+  type Choices,
+  type Fields,
+  type Listing,
+  type Notify,
+  type Schedule,
+} from './client.ts';
 import {
   Button,
-  ChevronDownGlyph,
-  ChevronRightGlyph,
+  Icon,
   InfoRow,
   LinkRow,
   ListRow,
@@ -20,19 +28,7 @@ import {
   ShellConfirm,
   StatusWord,
   TextInput,
-  TrashGlyph,
-} from '@hearthscale/ui';
-import {
-  isNewKey,
-  messageOf,
-  type AppFacts,
-  type Backend,
-  type Choices,
-  type Fields,
-  type Listing,
-  type Notify,
-  type Schedule,
-} from './client.ts';
+} from './kit.tsx';
 import { StateDot } from './marks.tsx';
 import {
   BLANK_RHYTHM,
@@ -132,15 +128,19 @@ function changes(next: Form, before: Form): Partial<Fields> {
 
 export function Detail({
   backend,
-  client,
-  tabKey,
+  id,
+  onBack,
+  onShow,
 }: {
   backend: Backend;
-  client: RealmClient;
-  /** The schedule's id, or the key of a tab for a new one. */
-  tabKey: string | undefined;
+  /** The schedule's id; null for a new one. */
+  id: string | null;
+  /** Shows the list again. */
+  onBack: () => void;
+  /** Shows the schedule the form made. */
+  onShow: (id: string) => void;
 }) {
-  const fresh = isNewKey(tabKey);
+  const fresh = id === null;
   const [listing, setListing] = useState<Listing | null>(null);
   const [apps, setApps] = useState<AppFacts[]>([]);
   const [draft, setDraft] = useState<Form | null>(null);
@@ -160,10 +160,10 @@ export function Detail({
   useEffect(() => {
     const read = () => void load().catch((e: unknown) => setNotice(messageOf(e)));
     read();
-    return client.events('changed', read);
-  }, [client, load]);
+    return backend.onChanged(read);
+  }, [backend, load]);
 
-  const schedule = fresh ? null : (listing?.schedules.find((s) => s.id === tabKey) ?? null);
+  const schedule = fresh ? null : (listing?.schedules.find((s) => s.id === id) ?? null);
   const saved = useMemo<Form>(
     () =>
       schedule
@@ -236,10 +236,9 @@ export function Detail({
       if (!form.prompt.trim()) throw new Error('Write what the app is told.');
       if (!form.app) throw new Error('Pick the app it runs in.');
       if (schedule) {
-        await backend.set(schedule.id, changes(form, saved));
+        await backend.set(schedule.id, changes(form, saved), 'Save');
         await load();
         setDraft(null);
-        await client.panels.open({ id: 'schedule', key: schedule.id, title: form.title.trim() });
       } else {
         const made = await backend.create({
           app: form.app,
@@ -251,8 +250,7 @@ export function Detail({
           ...toTiming(form.rhythm),
           timezone: localZone(),
         });
-        await client.panels.open({ id: 'schedule', key: made.id, title: made.title });
-        await client.panels.close({ id: 'schedule', ...(tabKey !== undefined && { key: tabKey }) });
+        onShow(made.id);
       }
     } catch (e) {
       setNotice(messageOf(e));
@@ -261,22 +259,46 @@ export function Detail({
     }
   };
 
+  const openRun = (session: string) => {
+    setNotice(null);
+    void backend.open(session).catch((e: unknown) => setNotice(messageOf(e)));
+  };
+
   const remove = async () => {
     if (!schedule) return;
     setDoomed(false);
     try {
       await backend.remove(schedule.id);
-      await client.panels.close({ id: 'schedule', key: schedule.id });
+      onBack();
     } catch (e) {
       setNotice(messageOf(e));
     }
   };
 
+  /** Back to the list, and Delete for a schedule that exists. */
+  const head = (
+    <div className="schedules-detail-head">
+      <Button icon={<Icon name="arrow-left-line" size={13} />} onClick={onBack}>
+        Back
+      </Button>
+      {schedule && (
+        <Button
+          variant="danger"
+          icon={<Icon name="delete-bin-fill" size={13} />}
+          onClick={() => setDoomed(true)}
+        >
+          Delete
+        </Button>
+      )}
+    </div>
+  );
+
   if (!listing) return null;
   if (!fresh && !schedule) {
     return (
-      <div className="hs-scroll hs-settings-scroll schedules-fill">
+      <div className="hs-scroll hs-settings-scroll schedules-fill schedules-detail">
         <div className="hs-settings-content">
+          {head}
           <SettingsCard>
             <ListRow title="This schedule is gone." />
           </SettingsCard>
@@ -316,19 +338,9 @@ export function Detail({
   const runs = schedule ? listing.runs.filter((r) => r.schedule === schedule.id) : [];
 
   return (
-    <div className="hs-scroll hs-settings-scroll schedules-fill">
+    <div className="hs-scroll hs-settings-scroll schedules-fill schedules-detail">
       <div className="hs-settings-content">
-        {schedule && (
-          <div className="schedules-detail-head">
-            <Button
-              variant="danger"
-              icon={<TrashGlyph size={13} />}
-              onClick={() => setDoomed(true)}
-            >
-              Delete
-            </Button>
-          </div>
-        )}
+        {head}
         <div className="schedules-fields">
           <span className="schedules-title-field">
             <TextInput
@@ -464,7 +476,7 @@ export function Detail({
                 aria-expanded={advanced}
                 onClick={() => setAdvanced((open) => !open)}
               >
-                {advanced ? <ChevronDownGlyph size={13} /> : <ChevronRightGlyph size={13} />}
+                <Icon name={advanced ? 'arrow-down-s-line' : 'arrow-right-s-line'} size={13} />
                 Advanced
               </button>
               {advanced && (
@@ -532,7 +544,7 @@ export function Detail({
                   ...(r.error && { sub: r.error }),
                 };
                 return session ? (
-                  <LinkRow key={r.id} {...row} onOpen={() => void client.open({ session })} />
+                  <LinkRow key={r.id} {...row} onOpen={() => openRun(session)} />
                 ) : (
                   <ListRow key={r.id} {...row} />
                 );

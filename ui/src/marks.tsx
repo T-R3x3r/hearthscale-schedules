@@ -3,12 +3,12 @@
  * dot of its state.
  */
 import { useSyncExternalStore } from 'react';
-import { AppIcon } from '@hearthscale/ui';
 import type { AppFacts } from './client.ts';
+import { AppIcon } from './kit.tsx';
 import type { Tone } from './words.ts';
 
-/** The scheme the realm wears: the document's `data-theme`, which the
- *  shell sets with each appearance; null before the first. */
+/** The scheme the view wears: the document's `data-theme`, which the host
+ *  sets with each appearance; null before the first. */
 function wornScheme(): 'light' | 'dark' | null {
   const scheme = document.documentElement.dataset.theme;
   return scheme === 'light' || scheme === 'dark' ? scheme : null;
@@ -20,12 +20,18 @@ function watchScheme(changed: () => void): () => void {
   return () => observer.disconnect();
 }
 
-/** The app's own icon for the scheme on screen, served beside its page,
+/** The platform the view is served from: the origin of the kit's style
+ *  sheet, which also serves the pictures of every app's package. */
+const platform = new URL(
+  document.querySelector<HTMLLinkElement>('link[rel="stylesheet"][href$="/ui/ui.css"]')!.href,
+).origin;
+
+/** The app's own icon for the scheme on screen, served from its package,
  *  on a plate; the app mark where the app has none or the scheme is not
  *  known yet. */
 export function AppMark({ app }: { app: AppFacts | undefined }) {
   const scheme = useSyncExternalStore(watchScheme, wornScheme);
-  const src = app?.icon && scheme ? `/apps/${app.id}/ui/${app.icon[scheme]}` : null;
+  const src = app?.icon && scheme ? `${platform}/apps/${app.id}/ui/${app.icon[scheme]}` : null;
   return (
     <span className="schedules-plate">
       <AppIcon src={src} size={22} />

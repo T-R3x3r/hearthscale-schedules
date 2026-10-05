@@ -1,14 +1,41 @@
-/* The Schedules page's own layout, over the design system the realm
-   serves. Every colour, corner, type size and gap is a token. */
+/* The Schedules view's own layout, over the kit the platform loads into
+   the view. Every colour, corner, type size and gap is a token. */
 
-/* A page fills the slot; the realm's root is no flex box to size it. */
+/* The list and a schedule each fill the view; the list stays laid out,
+   unseen, under a schedule. */
+.schedules-screen,
 .schedules-fill {
   position: absolute;
   inset: 0;
 }
 
-.hs-realm[data-slot='panel'] .schedules-fill {
+.schedules-screen[data-shown='false'] {
+  visibility: hidden;
+}
+
+.schedules-detail.schedules-fill {
   padding-top: var(--gap-stack);
+}
+
+/* A Remix Icon takes the box of its font size, as a drawn mark does. */
+.schedules-icon {
+  display: block;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  line-height: 1;
+}
+
+.hs-select > .schedules-icon,
+.hs-settings-search > .schedules-icon {
+  color: var(--dim);
+}
+
+.hs-shell
+  :is(.hs-glassbtn, .hs-hovbox, .hs-hovbox-ink, .hs-hovmut, .hs-chip):active
+  .schedules-icon {
+  transform: var(--press);
+  opacity: var(--press-fade);
 }
 
 /* The list page: the heading with Create at its end, the search, the
@@ -60,7 +87,7 @@
   min-width: 0;
 }
 
-/* A narrow page, beside an open panel: the heading goes, the filters lead
+/* A narrow view, in a narrow tile: the heading goes, the filters lead
    with Create at their end, and the search moves under them. */
 @media (max-width: 640px) {
   .schedules-fill.hs-settings-scroll {
@@ -184,10 +211,10 @@
   column-gap: var(--gap-stack);
 }
 
-/* The panel. */
+/* One schedule: Back at the head's start, Delete at its end. */
 .schedules-detail-head {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   margin-bottom: var(--gap-stack);
 }
 

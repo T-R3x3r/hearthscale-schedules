@@ -1,10 +1,11 @@
 /**
- * What the page asks the app's backend, typed: each call is one `invoke`
- * handler in `backend.js`, and the records are the ones it keeps. The
- * `schedule` panel opens a tab per schedule, keyed by its id; a tab for
- * a schedule not made yet has a key of its own shape.
+ * What the page asks of its app and of the platform, typed: each call of
+ * the backend is one of the tools `app.json` declares for the app's own
+ * view alone, and the records are the ones the backend keeps. The view
+ * hears the backend's `changed` event and opens a run's conversation
+ * through the platform's extensions, which `uses` names.
  */
-import type { RealmClient } from '@hearthscale/app';
+import { App, McpUiMessageResultSchema } from '@modelcontextprotocol/ext-apps';
 
 export type Notify = 'all' | 'failures' | 'none';
 
@@ -92,18 +93,47 @@ export interface Fields {
 }
 
 export class Backend {
-  constructor(private readonly client: RealmClient) {}
+  private readonly changes = new Set<() => void>();
 
-  private call<T>(method: string, params?: object): Promise<T> {
-    return this.client.invoke(method, params) as Promise<T>;
+  constructor(private readonly app: App) {
+    app.fallbackNotificationHandler = async (note) => {
+      const params = note.params as { name?: unknown } | undefined;
+      if (note.method === 'hearthscale/events/event' && params?.name === 'changed') {
+        for (const fn of this.changes) fn();
+      }
+    };
+  }
+
+  /** Calls `fn` each time the backend says its record changed; answers
+   *  the function that stops it. */
+  onChanged(fn: () => void): () => void {
+    this.changes.add(fn);
+    return () => this.changes.delete(fn);
+  }
+
+  /** One tool of the backend: its structured answer, else its words. A
+   *  call that changes something runs on the person's click, and `label`
+   *  is the control it pressed. A refusal rejects with the backend's
+   *  words. */
+  private async call<T>(name: string, args: object = {}, label?: string): Promise<T> {
+    const result = await this.app.callServerTool({
+      name,
+      arguments: args as Record<string, unknown>,
+      ...(label !== undefined && { _meta: { 'hearthscale/label': label } }),
+    });
+    const words = result.content
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n');
+    if (result.isError) throw new Error(words || `${name} failed`);
+    return (result.structuredContent ?? words) as T;
   }
 
   list(): Promise<Listing> {
-    return this.call('list');
+    return this.call('listing');
   }
 
-  apps(): Promise<AppFacts[]> {
-    return this.call('apps');
+  async apps(): Promise<AppFacts[]> {
+    return (await this.call<{ apps: AppFacts[] }>('apps')).apps;
   }
 
   choices(app: string): Promise<Choices> {
@@ -117,39 +147,44 @@ export class Backend {
 
   /** Makes a schedule whose expression is read in `timezone`. */
   create(draft: Fields & { timezone: string }): Promise<Schedule> {
-    return this.call('create', { draft });
+    return this.call('add', { draft }, 'Create');
   }
 
-  set(id: string, patch: Partial<Fields> & { enabled?: boolean }): Promise<void> {
-    return this.call('set', { id, patch });
+  set(id: string, patch: Partial<Fields> & { enabled?: boolean }, label: string): Promise<void> {
+    return this.call('set', { id, patch }, label);
   }
 
   remove(id: string): Promise<void> {
-    return this.call('remove', { id });
+    return this.call('delete', { id }, 'Delete');
   }
 
   runNow(id: string): Promise<void> {
-    return this.call('runNow', { id });
+    return this.call('runNow', { id }, 'Run now');
   }
 
   approve(id: string): Promise<void> {
-    return this.call('approve', { id });
+    return this.call('approve', { id }, 'Add');
   }
 
   dismiss(id: string): Promise<void> {
-    return this.call('dismiss', { id });
+    return this.call('dismiss', { id }, 'Dismiss');
+  }
+
+  /** Opens a run's conversation in its own app, on the person's click. */
+  async open(session: string): Promise<void> {
+    await this.extension('hearthscale/surfaces/open', { session });
+  }
+
+  /** One of the host's `hearthscale/*` extensions, a request the SDK's
+   *  types do not name; its result arrives whole. */
+  private extension(method: string, params: Record<string, unknown>): Promise<unknown> {
+    const request = this.app.request.bind(this.app) as (
+      message: { method: string; params: Record<string, unknown> },
+      schema: typeof McpUiMessageResultSchema,
+    ) => Promise<unknown>;
+    return request({ method, params }, McpUiMessageResultSchema);
   }
 }
-
-const NEW_KEY = 'new:';
-
-/** The key of a tab for a schedule not made yet. */
-export const newScheduleKey = (): string => `${NEW_KEY}${Date.now().toString(36)}`;
-
-/** Whether a tab's key names a schedule not made yet; a tab opened with
- *  no key is one too. */
-export const isNewKey = (key: string | undefined): boolean =>
-  key === undefined || key.startsWith(NEW_KEY);
 
 /** A refusal's message, as the page shows it. */
 export const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));

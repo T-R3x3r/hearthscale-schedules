@@ -1,17 +1,24 @@
 /**
- * The main view: every schedule in one list, with filters, a search,
- * Create and the suggestions that wait for the person. A row opens its
- * schedule in the `schedule` panel; Completed lists the runs instead,
- * and a run opens its conversation.
+ * The list: every schedule, with filters, a search, Create and the
+ * suggestions that wait for the person. A row opens its schedule in the
+ * view; Completed lists the runs instead, and a run opens its
+ * conversation.
  */
 import { useCallback, useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
-import type { RealmClient } from '@hearthscale/app';
+import {
+  messageOf,
+  type AppFacts,
+  type Backend,
+  type Listing,
+  type Run,
+  type Schedule,
+  type Suggestion,
+} from './client.ts';
 import {
   anchorFrom,
   Button,
   Chip,
-  CloseGlyph,
-  DotsGlyph,
+  Icon,
   IconButton,
   LinkRow,
   ListRow,
@@ -20,27 +27,12 @@ import {
   MItem,
   Notice,
   PageTitle,
-  PauseGlyph,
-  PlayGlyph,
-  PlusGlyph,
-  RunGlyph,
   SettingsCard,
   SettingsSearch,
   SettingsSection,
   ShellConfirm,
-  TrashGlyph,
   type MenuAnchor,
-} from '@hearthscale/ui';
-import {
-  messageOf,
-  newScheduleKey,
-  type AppFacts,
-  type Backend,
-  type Listing,
-  type Run,
-  type Schedule,
-  type Suggestion,
-} from './client.ts';
+} from './kit.tsx';
 import { AppMark, StateDot } from './marks.tsx';
 import { outcome, relative, standing, useTick, type Tone } from './words.ts';
 
@@ -75,16 +67,15 @@ function Titled({ tone, children }: { tone: Tone; children: ReactNode }) {
 function RowMenuPress({ open, onPress }: { open: boolean; onPress: (anchor: MenuAnchor) => void }) {
   return (
     <IconButton
-      size="sm"
       aria-label="More"
       className="hs-rowact"
       data-open={open ? 'true' : 'false'}
       onClick={(e) => {
         e.stopPropagation();
-        onPress(anchorFrom('row', e));
+        onPress(anchorFrom(e));
       }}
     >
-      <DotsGlyph size={16} />
+      <Icon name="more-fill" size={16} />
     </IconButton>
   );
 }
@@ -114,7 +105,17 @@ function PressCard({ onPress, children }: { onPress: () => void; children: React
 
 type Menu = { kind: 'schedule' | 'suggestion'; id: string; anchor: MenuAnchor };
 
-export function List({ backend, client }: { backend: Backend; client: RealmClient }) {
+export function List({
+  backend,
+  onOpen,
+  onCreate,
+}: {
+  backend: Backend;
+  /** Shows one schedule in place of the list. */
+  onOpen: (id: string) => void;
+  /** Shows the form of a new schedule in place of the list. */
+  onCreate: () => void;
+}) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [apps, setApps] = useState<AppFacts[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
@@ -134,8 +135,8 @@ export function List({ backend, client }: { backend: Backend; client: RealmClien
   }, [backend]);
   useEffect(() => {
     load();
-    return client.events('changed', load);
-  }, [client, load]);
+    return backend.onChanged(load);
+  }, [backend, load]);
 
   /** One write, whose refusal is the notice. */
   const act = (run: () => Promise<void>) => {
@@ -164,17 +165,17 @@ export function List({ backend, client }: { backend: Backend; client: RealmClien
   });
   const suggestions = (listing?.suggestions ?? []).filter((g) => matches(g));
 
-  const open = (s: Schedule) =>
-    void client.panels.open({ id: 'schedule', key: s.id, title: s.title });
-  const create = () =>
-    void client.panels.open({ id: 'schedule', key: newScheduleKey(), title: 'New schedule' });
+  const openRun = (session: string) => {
+    setNotice(null);
+    void backend.open(session).catch((e: unknown) => setNotice(messageOf(e)));
+  };
   const toggleMenu = (kind: Menu['kind'], id: string, anchor: MenuAnchor) =>
     setMenu((m) => (m?.id === id ? null : { kind, id, anchor }));
 
   const scheduleRow = (s: Schedule) => {
     const state = standing(s);
     return (
-      <PressCard key={s.id} onPress={() => open(s)}>
+      <PressCard key={s.id} onPress={() => onOpen(s.id)}>
         <ListRow
           mark={<AppMark app={appOf(s.app)} />}
           title={<Titled tone={state.tone}>{s.title}</Titled>}
@@ -215,11 +216,7 @@ export function List({ backend, client }: { backend: Backend; client: RealmClien
     };
     return (
       <SettingsCard key={r.id}>
-        {session ? (
-          <LinkRow {...row} onOpen={() => void client.open({ session })} />
-        ) : (
-          <ListRow {...row} />
-        )}
+        {session ? <LinkRow {...row} onOpen={() => openRun(session)} /> : <ListRow {...row} />}
       </SettingsCard>
     );
   };
@@ -264,7 +261,7 @@ export function List({ backend, client }: { backend: Backend; client: RealmClien
           </PageTitle>
         </div>
         <span className="schedules-create">
-          <Button icon={<PlusGlyph size={13} />} onClick={create}>
+          <Button icon={<Icon name="add-fill" size={13} />} onClick={onCreate}>
             Create
           </Button>
         </span>
@@ -303,9 +300,9 @@ export function List({ backend, client }: { backend: Backend; client: RealmClien
         </div>
       </div>
       {menu && menuSchedule && (
-        <MenuSurface keyboard anchor={menu.anchor} align="right" onDismiss={() => setMenu(null)}>
+        <MenuSurface anchor={menu.anchor} align="right" onDismiss={() => setMenu(null)}>
           <MItem
-            icon={<RunGlyph size={14} />}
+            icon={<Icon name="flashlight-fill" size={14} />}
             label="Run now"
             disabled={menuSchedule.running === true}
             onClick={() => act(() => backend.runNow(menuSchedule.id))}
@@ -313,21 +310,21 @@ export function List({ backend, client }: { backend: Backend; client: RealmClien
           {!menuSchedule.spent &&
             (menuSchedule.enabled ? (
               <MItem
-                icon={<PauseGlyph size={14} />}
+                icon={<Icon name="pause-fill" size={14} />}
                 label="Pause"
-                onClick={() => act(() => backend.set(menuSchedule.id, { enabled: false }))}
+                onClick={() => act(() => backend.set(menuSchedule.id, { enabled: false }, 'Pause'))}
               />
             ) : (
               <MItem
-                icon={<PlayGlyph size={14} />}
+                icon={<Icon name="play-fill" size={14} />}
                 label="Resume"
-                onClick={() => act(() => backend.set(menuSchedule.id, { enabled: true }))}
+                onClick={() => act(() => backend.set(menuSchedule.id, { enabled: true }, 'Resume'))}
               />
             ))}
           <MDivider />
           <MItem
             danger
-            icon={<TrashGlyph size={14} />}
+            icon={<Icon name="delete-bin-fill" size={14} />}
             label="Delete"
             onClick={() => {
               setMenu(null);
@@ -337,9 +334,9 @@ export function List({ backend, client }: { backend: Backend; client: RealmClien
         </MenuSurface>
       )}
       {menu && menuSuggestion && (
-        <MenuSurface keyboard anchor={menu.anchor} align="right" onDismiss={() => setMenu(null)}>
+        <MenuSurface anchor={menu.anchor} align="right" onDismiss={() => setMenu(null)}>
           <MItem
-            icon={<CloseGlyph size={14} />}
+            icon={<Icon name="close-line" size={14} />}
             label="Dismiss"
             onClick={() => act(() => backend.dismiss(menuSuggestion.id))}
           />

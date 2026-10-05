@@ -16,13 +16,14 @@ hearthscale dev .
 links this folder into the running platform, picks up every change, and
 asks once in the window before any code runs.
 
-## The page
+## The view
 
-The page's source is React on Hearthscale's design system, under `ui/src`.
-Its build writes `ui.js` and `ui.css` into this folder, and those two files
-are what the package carries, so they are committed with every change to
-the source. The design system is linked from a Hearthscale checkout, so
-this clone must sit beside one named `Hearthscale`:
+Schedules shows one view, `schedules`, which fills its tab when the rail
+opens it: the list, and in its place one schedule or the form of a new
+one. Its source is React under `ui/src`, drawn with the `hs-*` classes and
+`ri-*` icons of the kit that Hearthscale loads into every view. Its build
+writes `views/schedules.js`, the one file the package carries for it, so
+the file is committed with every change to the source:
 
 ```
 cd ui
@@ -30,8 +31,16 @@ pnpm install
 pnpm build
 ```
 
+The view reaches its backend only through the tools `app.json` declares
+with `"visibility": ["app"]`, which no agent sees, and the platform only
+through the extensions `uses` names: `events` for the backend's `changed`
+event, and `surfaces.open` to open a run's conversation.
+
 `ui/pnpm-workspace.yaml` keeps the build its own project: without it, pnpm
 joins any workspace in a folder above.
+
+`contributes.main` stands beside the `schedules` surface: the client lists
+an app in the rail by it.
 
 ## Releasing
 

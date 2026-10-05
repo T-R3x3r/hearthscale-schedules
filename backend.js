@@ -4,8 +4,8 @@
  * schedule names an app, a cron expression or one instant, a prompt and
  * how to catch up; when it is due the backend starts a conversation in
  * that app with the prompt, keeps the run until the conversation's turn
- * ends, and tells the person as the schedule asks. The tools serve
- * agents over the bus; the invoke handlers serve the app's own page.
+ * ends, and tells the person as the schedule asks. Five tools serve
+ * agents over the bus; the others serve the app's own view alone.
  * Once a day and whenever the set of apps changes, it asks the model for
  * recurring tasks worth suggesting. The service lifetime keeps the timers
  * running with no window open.
@@ -550,9 +550,9 @@ async function suggestOwn() {
   }
 }
 
-// ---- The surface ------------------------------------------------------------
+// ---- The view ---------------------------------------------------------------
 
-/** A schedule as the page draws it: the record with its words. */
+/** A schedule as the view draws it: the record with its words. */
 function shown(s, nameOf) {
   return { ...s, words: capital(rhythmWords(s)), appName: nameOf(s) };
 }
@@ -653,9 +653,7 @@ module.exports = {
       await changed();
       return `Removed "${s.title}".`;
     },
-  },
-  invoke: {
-    async list() {
+    async listing() {
       const nameOf = await appNames();
       return {
         schedules: Object.values(state.schedules).map((s) => shown(s, nameOf)),
@@ -664,7 +662,9 @@ module.exports = {
         zone: localZone(),
       };
     },
-    apps: () => candidates(),
+    async apps() {
+      return { apps: await candidates() };
+    },
     async choices({ app }) {
       const [models, projects, effective] = await Promise.all([
         ctx.models.for(app),
@@ -679,7 +679,7 @@ module.exports = {
       parseCron(spec);
       return capital(rhythmWords({ spec: String(spec).trim() }));
     },
-    async create({ draft }) {
+    async add({ draft }) {
       const app = await resolveApp(null, draft.app);
       const s = makeSchedule(draft, app);
       state.schedules[s.id] = s;
@@ -693,7 +693,7 @@ module.exports = {
       await changed();
       return s;
     },
-    async remove({ id }) {
+    async delete({ id }) {
       return module.exports.tools.remove({ id });
     },
     async runNow({ id }) {
