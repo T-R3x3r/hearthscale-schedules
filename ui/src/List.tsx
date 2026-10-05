@@ -36,7 +36,7 @@ import {
 import { AppMark, StateDot } from './marks.tsx';
 import { outcome, relative, standing, useTick, type Tone } from './words.ts';
 
-type Filter = 'all' | 'active' | 'paused' | 'completed';
+export type Filter = 'all' | 'active' | 'paused' | 'completed';
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -107,10 +107,18 @@ type Menu = { kind: 'schedule' | 'suggestion'; id: string; anchor: MenuAnchor };
 
 export function List({
   backend,
+  filter,
+  query,
+  onFilter,
+  onQuery,
   onOpen,
   onCreate,
 }: {
   backend: Backend;
+  filter: Filter;
+  query: string;
+  onFilter: (filter: Filter) => void;
+  onQuery: (query: string) => void;
   /** Shows one schedule in place of the list. */
   onOpen: (id: string) => void;
   /** Shows the form of a new schedule in place of the list. */
@@ -118,8 +126,6 @@ export function List({
 }) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [apps, setApps] = useState<AppFacts[]>([]);
-  const [filter, setFilter] = useState<Filter>('all');
-  const [query, setQuery] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [doomed, setDoomed] = useState<Schedule | null>(null);
@@ -266,11 +272,11 @@ export function List({
           </Button>
         </span>
         <div className="schedules-search">
-          <SettingsSearch value={query} placeholder="Search scheduled tasks" onChange={setQuery} />
+          <SettingsSearch value={query} placeholder="Search scheduled tasks" onChange={onQuery} />
         </div>
         <div className="schedules-filters">
           {FILTERS.map((f) => (
-            <Chip key={f.id} selected={filter === f.id} onClick={() => setFilter(f.id)}>
+            <Chip key={f.id} selected={filter === f.id} onClick={() => onFilter(f.id)}>
               {f.label}
             </Chip>
           ))}

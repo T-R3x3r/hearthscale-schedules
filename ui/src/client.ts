@@ -170,6 +170,11 @@ export class Backend {
     return this.call('dismiss', { id }, 'Dismiss');
   }
 
+  /** Keeps what the view shows for its next load. */
+  async keep(state: unknown): Promise<void> {
+    await this.extension('hearthscale/ui/set-widget-state', { state });
+  }
+
   /** Opens a run's conversation in its own app, on the person's click. */
   async open(session: string): Promise<void> {
     await this.extension('hearthscale/surfaces/open', { session });

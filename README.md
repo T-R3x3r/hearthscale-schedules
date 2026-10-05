@@ -34,7 +34,10 @@ pnpm build
 The view reaches its backend only through the tools `app.json` declares
 with `"visibility": ["app"]`, which no agent sees, and the platform only
 through the extensions `uses` names: `events` for the backend's `changed`
-event, and `surfaces.open` to open a run's conversation.
+event, and `surfaces.open` to open a run's conversation. It keeps the
+schedule open over the list, the filter and the search with
+`hearthscale/ui/set-widget-state`, and starts from `hearthscale/widgetState`
+when the host loads it again.
 
 `ui/pnpm-workspace.yaml` keeps the build its own project: without it, pnpm
 joins any workspace in a folder above.
