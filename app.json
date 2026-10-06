@@ -504,5 +504,10 @@
       "update",
       "remove"
     ]
-  }
+  },
+  "license": "MIT",
+  "categories": [
+    "productivity"
+  ],
+  "payment": "free"
 }
