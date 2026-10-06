@@ -450,8 +450,7 @@ export function MenuSurface({
       <div
         className="hs-menu hs-menu-surface"
         role="menu"
-        data-closing="false"
-        style={{ minWidth: `min(${minWidth}px, calc(100vw - 16px))` }}
+        style={{ minWidth: `min(${minWidth}px, calc(100vw - var(--space) * 4))` }}
       >
         {children}
       </div>
