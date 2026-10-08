@@ -20,6 +20,8 @@ export function useTick(): void {
   }, []);
 }
 
+const days = (n: number) => (n === 1 ? '1 day' : `${n} days`);
+
 /** How far off an instant is, in the coarsest unit that still says
  *  something. */
 export function relative(iso: string): string {
@@ -32,7 +34,7 @@ export function relative(iso: string): string {
         ? `${Math.round(abs / 60_000)} min`
         : abs < 86_400_000
           ? `${Math.round(abs / 3_600_000)} h`
-          : `${Math.round(abs / 86_400_000)} days`;
+          : days(Math.round(abs / 86_400_000));
   return ms < 0 ? `${unit} ago` : `in ${unit}`;
 }
 
