@@ -1,7 +1,7 @@
 {
   "id": "schedules",
   "name": "Schedules",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "api": 6,
   "icon": {
     "light": "assets/icon-light.svg",
@@ -41,7 +41,7 @@
     {
       "name": "create",
       "title": "Schedule a run",
-      "description": "Create a schedule that starts a conversation in an app at a time, with a prompt. spec is a five-field cron expression (minute hour day-of-month month day-of-week): every minute is \"* * * * *\", every hour at minute 0 is \"0 * * * *\", every weekday at nine is \"0 9 * * 1-5\" and every second day at nine is \"0 9 */2 * *\"; once is one ISO date-time instead. The expression is read in timezone, the machine's own zone when none is given. prompt is what the app will be told when it fires, written as an instruction, because the fire opens a fresh conversation with that text and nothing else. catchUp is \"once\" to run a window the computer slept through, or \"skip\" to wait for the next one. The answer states the schedule in words with its next run: tell the person, so a wrong time shows.",
+      "description": "Create a schedule that starts a conversation in an app at a time, with a prompt. spec is a five-field cron expression (minute hour day-of-month month day-of-week): every minute is \"* * * * *\", every hour at minute 0 is \"0 * * * *\", every weekday at nine is \"0 9 * * 1-5\" and every second day at nine is \"0 9 */2 * *\"; once is one ISO date-time instead. The expression is read in timezone, the person's own zone when none is given. prompt is what the app will be told when it fires, written as an instruction, because the fire opens a fresh conversation with that text and nothing else. catchUp is \"once\" to run a window the computer slept through, or \"skip\" to wait for the next one. The answer states the schedule in words with its next run: tell the person, so a wrong time shows.",
       "input": {
         "type": "object",
         "properties": {
@@ -63,7 +63,7 @@
           },
           "timezone": {
             "type": "string",
-            "description": "An IANA zone name the expression is read in; the machine's own zone when omitted"
+            "description": "An IANA zone name the expression is read in, only when the person names a zone; left out, it is read in the person's own zone, the one the conversation names"
           },
           "app": {
             "type": "string",
@@ -113,7 +113,8 @@
             "description": "A five-field cron expression"
           },
           "timezone": {
-            "type": "string"
+            "type": "string",
+            "description": "An IANA zone name the expression is read in, only when the person names a zone; left out, it is read in the person's own zone, the one the conversation names"
           },
           "app": {
             "type": "string",
@@ -165,7 +166,8 @@
             "type": "string"
           },
           "timezone": {
-            "type": "string"
+            "type": "string",
+            "description": "An IANA zone name the expression is read in, only when the person names a zone; left out, it is read in the person's own zone, the one the conversation names"
           },
           "enabled": {
             "type": "boolean"

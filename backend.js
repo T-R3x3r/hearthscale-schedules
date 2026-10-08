@@ -367,6 +367,11 @@ async function failedToStart(s, run, reason) {
   await changed();
 }
 
+/** The first message of a run: that it is one run of a schedule that
+ *  already exists, then the schedule's prompt. */
+const runMessage = (s) =>
+  `This conversation is one run of the schedule "${s.title}" (${rhythmWords(s)}), which already exists in Schedules. Do now what its prompt asks.\n\n${s.prompt}`;
+
 /** Starts the conversation a schedule asks for and records the run. A
  *  schedule whose app is gone or off is switched off with the reason. */
 async function fire(s, why) {
@@ -386,7 +391,7 @@ async function fire(s, why) {
     const { id } = await ctx.sessions.create({
       app: s.app,
       title: `${s.title}, ${stamp(s.lastRunAt, s.timezone)}`,
-      message: s.prompt,
+      message: runMessage(s),
       ...(s.project && { project: s.project }),
       ...(s.model && { model: s.model }),
     });
