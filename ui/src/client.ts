@@ -191,5 +191,8 @@ export class Backend {
   }
 }
 
-/** A refusal's message, as the page shows it. */
-export const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+/** A refusal's message, as the page shows it: the host's words, without
+ *  the "MCP error <code>: " that the MCP SDK puts before the message of a
+ *  refused request. */
+export const messageOf = (e: unknown): string =>
+  (e instanceof Error ? e.message : String(e)).replace(/^MCP error -?\d+: /, '');
