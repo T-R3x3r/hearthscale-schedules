@@ -454,7 +454,9 @@ async function reconcile() {
 
 // ---- Suggestions of its own -------------------------------------------------
 
-const SUGGESTION_SCHEMA = {
+/** The answer a suggestion ask takes: each task runs in one of the apps
+ *  the ask lists. */
+const suggestionSchema = (apps) => ({
   type: 'object',
   properties: {
     suggestions: {
@@ -463,7 +465,7 @@ const SUGGESTION_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          app: { type: 'string' },
+          app: { type: 'string', enum: apps.map((a) => a.id) },
           title: { type: 'string' },
           prompt: { type: 'string' },
           spec: { type: 'string' },
@@ -474,17 +476,26 @@ const SUGGESTION_SCHEMA = {
     },
   },
   required: ['suggestions'],
-};
+});
 
 /** The key a suggestion is known by, so a dismissed one never returns. */
 const keyOf = (app, title) => `${app}:${String(title).trim().toLowerCase()}`;
 
+/** A gap a model leaves for the person to fill in, such as "[city]" or
+ *  "<topic>": a run cannot fill it. */
+const PLACEHOLDER = /\[[^\]]*\]|<[^>]*>/;
+/** The person's own things, such as "my calendar": a run has none of
+ *  them. */
+const PERSONAL = /\b(my|mine|our)\b/i;
+
 /**
  * Asks the model for up to three recurring tasks worth having in the apps
- * with an agent, given what each app says it does and what is scheduled
- * already. Each answer waits as a suggestion; one the person dismissed,
- * one already scheduled or suggested, and one that does not parse are
- * left out.
+ * with an agent. A run's agent works alone, with its model's knowledge and
+ * the tools the enabled apps offer, so the ask lists those tools and what
+ * a run cannot reach. Each answer waits as a suggestion; one the person
+ * dismissed, one already scheduled or suggested, one that leaves a gap to
+ * fill in or speaks of the person's own things, and one that does not
+ * parse are left out.
  */
 async function suggestOwn() {
   if (suggesting) return;
@@ -494,27 +505,43 @@ async function suggestOwn() {
     await save();
     const apps = await candidates();
     if (apps.length === 0) return;
+    const offered = (await ctx.apps.list()).filter(
+      (a) => a.id !== ctx.app.id && a.capabilities.length > 0,
+    );
     const taken = new Set([
       ...Object.values(state.schedules).map((s) => keyOf(s.app, s.title)),
       ...state.suggestions.map((g) => keyOf(g.app, g.title)),
       ...state.dismissed,
     ]);
     const request = [
-      'The apps on this computer that hold conversations:',
+      "A schedule starts a new conversation in an app at the times it names and gives the app's agent its prompt. The agent then does the task alone, and the person reads its answer later.",
+      '',
+      'The apps a schedule can run in:',
       ...apps.map((a) => `- ${a.id}: ${a.name}. ${a.description}`),
+      '',
+      'The tools that other apps on this computer give these agents:',
+      ...(offered.length > 0
+        ? offered.map((a) => `- ${a.name}: ${a.description} Its tools: ${a.capabilities.join(', ')}.`)
+        : ['- none']),
+      '',
+      "An agent on a schedule has its model's knowledge and these tools, and nothing else. It knows nothing about the person except what its prompt says: it cannot see their calendar, mail, messages, accounts, files, lists, plans, other conversations or activity, and it cannot check, clean, change or update the computer.",
       '',
       'Already scheduled or turned down:',
       ...(taken.size > 0 ? [...taken].map((k) => `- ${k}`) : ['- nothing']),
       '',
-      `Suggest up to ${SUGGEST_MAX} recurring tasks a person would want, each for one of these apps: its id as app, a title of a few words, the prompt the app is told when it runs, a five-field cron expression as spec, and the reason in one sentence. Suggest nothing that repeats what is listed above.`,
+      offered.length > 0
+        ? 'A good task brings the person something worth reading at that time: current information that one of the tools above can find, or something new that the model writes, such as ideas or a short lesson. The person is not there when it runs, so a task that makes something to use or click, such as a page or a drawing, or whose answer is the same at every run, is not worth a schedule.'
+        : 'A good task brings the person something new that the model writes, such as ideas or a short lesson. With no tools, an agent cannot look anything up, so it cannot know the news, the weather or anything else of the day. A task whose answer is the same at every run is not worth a schedule.',
+      '',
+      `Suggest up to ${SUGGEST_MAX} recurring tasks a person would want that such an agent can finish, each one that works for anyone as written, with no detail about the person, such as where they live. For each give: app, the id of the app it runs in; title, a few words; prompt, what the agent is told at each run, complete, with no placeholder to fill in; spec, a five-field cron expression; and reason, what the task gives the person, in one short sentence that speaks to them as you. Suggest nothing that repeats what is listed above.`,
     ].join('\n');
     let raw = '';
     for await (const delta of ctx.models.complete({
       messages: [
-        { role: 'system', content: 'You suggest useful recurring tasks for a person\'s apps.' },
+        { role: 'system', content: 'You suggest useful recurring tasks that a person\'s apps can do.' },
         { role: 'user', content: request },
       ],
-      format: { name: 'suggestions', schema: SUGGESTION_SCHEMA },
+      format: { name: 'suggestions', schema: suggestionSchema(apps) },
       reasoning: 'none',
     })) {
       if ('done' in delta) {
@@ -527,7 +554,9 @@ async function suggestOwn() {
     let added = 0;
     for (const g of answer.suggestions ?? []) {
       const app = apps.find((a) => a.id === g.app);
-      if (!app || taken.has(keyOf(g.app, g.title)) || added >= SUGGEST_MAX) continue;
+      const words = `${g.title} ${g.prompt}`;
+      if (!app || PLACEHOLDER.test(words) || PERSONAL.test(words)) continue;
+      if (taken.has(keyOf(g.app, g.title)) || added >= SUGGEST_MAX) continue;
       let draft;
       try {
         draft = makeSchedule({ title: g.title, prompt: g.prompt, spec: g.spec }, app);
