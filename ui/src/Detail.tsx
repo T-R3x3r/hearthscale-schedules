@@ -96,7 +96,7 @@ function formOf(s: Schedule): Form {
   };
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+export const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** The zone the person's clock reads, which a new schedule's expression
  *  is read in. */

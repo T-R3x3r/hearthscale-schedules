@@ -92,14 +92,23 @@ export interface Fields {
   once?: string;
 }
 
+export type Direction = 'back' | 'forward';
+
 export class Backend {
   private readonly changes = new Set<() => void>();
+  private readonly steps = new Set<(direction: Direction) => Promise<void>>();
 
   constructor(private readonly app: App) {
     app.fallbackNotificationHandler = async (note) => {
-      const params = note.params as { name?: unknown } | undefined;
+      const params = note.params as { name?: unknown; direction?: unknown } | undefined;
       if (note.method === 'hearthscale/events/event' && params?.name === 'changed') {
         for (const fn of this.changes) fn();
+      }
+      if (
+        note.method === 'hearthscale/ui/history' &&
+        (params?.direction === 'back' || params?.direction === 'forward')
+      ) {
+        for (const fn of this.steps) await fn(params.direction);
       }
     };
   }
@@ -109,6 +118,13 @@ export class Backend {
   onChanged(fn: () => void): () => void {
     this.changes.add(fn);
     return () => this.changes.delete(fn);
+  }
+
+  /** Calls `fn` each time the person asks to go back or forward; answers
+   *  the function that stops it. */
+  onHistory(fn: (direction: Direction) => Promise<void>): () => void {
+    this.steps.add(fn);
+    return () => this.steps.delete(fn);
   }
 
   /** One tool of the backend: its structured answer, else its words. A
