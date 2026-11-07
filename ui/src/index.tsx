@@ -121,7 +121,7 @@ const style = document.createElement('style');
 style.textContent = sheet;
 document.head.append(style);
 
-const app = new App({ name: 'Schedules', version: '2.0.4' }, {}, { autoResize: false });
+const app = new App({ name: 'Schedules', version: '2.0.5' }, {}, { autoResize: false });
 const backend = new Backend(app);
 await app.connect(new PostMessageTransport(window.parent, window.parent));
 

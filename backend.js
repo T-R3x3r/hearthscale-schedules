@@ -519,7 +519,7 @@ async function suggestOwn() {
       'The apps a schedule can run in:',
       ...apps.map((a) => `- ${a.id}: ${a.name}. ${a.description}`),
       '',
-      'The tools that other apps on this computer give these agents:',
+      'The tools that other apps on this device give these agents:',
       ...(offered.length > 0
         ? offered.map((a) => `- ${a.name}: ${a.description} Its tools: ${a.capabilities.join(', ')}.`)
         : ['- none']),

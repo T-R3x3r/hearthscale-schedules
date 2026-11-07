@@ -15,6 +15,6 @@ The list shows each schedule with when it runs next. **Completed** lists the run
 ## What Schedules asks for
 
 - **Conversations in your other apps.** A run starts a conversation in the app the schedule names, at that app's permission level. A step that needs your yes waits until you answer it.
-- **Running in the background.** Schedules keeps running as long as Hearthscale runs, also with its window closed. A run time that passes while your computer sleeps or Hearthscale is closed is skipped.
+- **Running in the background.** Schedules keeps running as long as Hearthscale runs, also with its window closed. A run time that passes while your device sleeps or Hearthscale is closed is skipped.
 - **Notifications.** A notification tells you when a run finishes or fails, as each schedule asks.
 - **Your chat model.** Schedules asks your chat model for its suggestions.
